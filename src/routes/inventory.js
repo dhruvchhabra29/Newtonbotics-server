@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const router = express.Router();
-const { optionalAuth, verifyToken, requireTeamMember, requireAdmin } = require('../middleware/auth');
+const { verifyToken, requireTeamMember, requireAdmin } = require('../middleware/auth');
 const { sendInventoryCheckoutEmail } = require('../services/emailService');
 const Equipment = require('../models/Equipment');
 const EquipmentCategory = require('../models/EquipmentCategory');
