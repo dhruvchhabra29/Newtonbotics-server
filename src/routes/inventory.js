@@ -543,7 +543,7 @@ router.get(
     // Find all equipment and filter checkouts by userId
     const equipments = await Equipment.find({}).select('name categoryId checkouts');
 
-    let userCheckouts = [];
+    const userCheckouts = [];
     equipments.forEach(equipment => {
       equipment.checkouts.forEach(checkout => {
         if (String(checkout.userId) === String(userId)) {
