@@ -159,7 +159,7 @@ router.delete(
 router.post(
   '/equipment/:id/checkout',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     body('quantity').isInt({ min: 1 }).toInt(),
@@ -265,7 +265,7 @@ router.post(
 router.post(
   '/equipment/:id/urgent-checkout',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     body('quantity').optional().isInt({ min: 1 }).toInt(),
@@ -318,7 +318,7 @@ router.post(
 router.put(
   '/equipment/:id/return',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     body('checkoutId').optional().isString(),
@@ -424,7 +424,7 @@ router.put(
 router.get(
   '/checkouts',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     query('equipmentId').optional().isString(),
     query('userId').optional().isString(),
@@ -543,7 +543,7 @@ router.get(
 router.get(
   '/equipment/:id/checkouts',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     query('status').optional().isIn(['checked_out', 'returned', 'overdue', 'lost', 'project_use']),
@@ -596,7 +596,7 @@ router.get(
 router.get(
   '/equipment/:id/checkouts/active',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [param('id').isString()],
   asyncHandler(async (req, res) => {
     const equipment = await Equipment.findById(req.params.id).select('name checkouts');
