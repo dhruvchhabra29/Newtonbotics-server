@@ -142,7 +142,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       const transferTime = new Date();
       const updatedEquipment = await Equipment.findOneAndUpdate(
         { _id: sourceEquipment._id, currentQuantity: { $gte: request.quantity } },
-        { $inc: { currentQuantity: -request.quantity } },
+        { $inc: { currentQuantity: -request.quantity }, $push: { stockMovements: { delta: -request.quantity, reason: `Approved component request ${request._id}: ${request.purpose}`, performedBy: req.user.id, performedAt: transferTime, type: 'request_approval' } } },
         { new: true, session, runValidators: true },
       );
       if (!updatedEquipment) throw new ApiError(409, 'Insufficient General Lab stock to approve this request');
