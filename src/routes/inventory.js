@@ -5,7 +5,7 @@ const { optionalAuth, verifyToken, requireTeamMember, requireAdmin } = require('
 const { sendInventoryCheckoutEmail } = require('../services/emailService');
 const Equipment = require('../models/Equipment');
 const EquipmentCategory = require('../models/EquipmentCategory');
-const { asyncHandler, validationErrorHandler, notFoundErrorHandler } = require('../middleware/errorHandler');
+const { asyncHandler, validationErrorHandler, notFoundErrorHandler, ApiError } = require('../middleware/errorHandler');
 const logger = require('../utils/logger');
 
 const equipmentFields = [
