@@ -73,7 +73,7 @@ router.get(
     if (status) filter.status = status;
     if (q) filter.name = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
     const [items, total] = await Promise.all([
-      Equipment.find(filter).limit(limit).skip(skip).sort({ createdAt: -1 }),
+      Equipment.find(filter).select('-checkouts -stockMovements').limit(limit).skip(skip).sort({ createdAt: -1 }),
       Equipment.countDocuments(filter),
     ]);
     res.json({ success: true, data: { items, pagination: { total, limit, skip, hasMore: total > skip + items.length } } });
@@ -81,10 +81,10 @@ router.get(
 );
 
 // Resolve an opaque printed QR identifier to its inventory item.
-router.get('/equipment/qr/:qrCodeId', asyncHandler(async (req, res) => {
+router.get('/equipment/qr/:qrCodeId', verifyToken, asyncHandler(async (req, res) => {
   const qrCodeId = String(req.params.qrCodeId || '');
   if (!/^NB-[A-F0-9]{24}$/.test(qrCodeId)) return res.status(404).json({ success: false, message: 'QR code not found' });
-  const item = await Equipment.findOne({ qrCodeId }).select('-checkouts');
+  const item = await Equipment.findOne({ qrCodeId }).select('name description categoryId modelNumber manufacturer currentQuantity status location imageUrl qrCodeId').populate('categoryId', 'name');
   if (!item) throw notFoundErrorHandler('Equipment');
   res.json({ success: true, data: { item } });
 }));
@@ -100,7 +100,7 @@ router.get(
     return next();
   }),
   asyncHandler(async (req, res) => {
-    const eq = await Equipment.findById(req.params.id);
+    const eq = await Equipment.findById(req.params.id).select('-checkouts -stockMovements');
     if (!eq) throw notFoundErrorHandler('Equipment');
     res.json({ success: true, data: { item: eq } });
   })
@@ -708,7 +708,7 @@ router.get(
 );
 
 // Categories CRUD
-router.get('/categories', optionalAuth, asyncHandler(async (req, res) => {
+router.get('/categories', verifyToken, asyncHandler(async (req, res) => {
   const items = await EquipmentCategory.find({}).sort({ name: 1 });
   res.json({ success: true, data: { items } });
 }));
