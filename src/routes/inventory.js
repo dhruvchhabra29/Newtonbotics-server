@@ -133,12 +133,51 @@ router.put(
     const errors = validationResult(req);
     if (!errors.isEmpty()) throw validationErrorHandler(errors);
     const changes = pickEquipmentFields(req.body);
+    delete changes.currentQuantity; // Stock is changed only through the audited adjustment endpoint.
     if (!Object.keys(changes).length) return res.status(400).json({ success: false, message: 'At least one equipment field is required' });
     if (changes.categoryId && !(await EquipmentCategory.exists({ _id: changes.categoryId }))) throw notFoundErrorHandler('Category');
     const updated = await Equipment.findByIdAndUpdate(req.params.id, changes, { new: true, runValidators: true });
     if (!updated) throw notFoundErrorHandler('Equipment');
     res.json({ success: true, message: 'Equipment updated', data: { item: updated } });
   })
+);
+
+router.post(
+  '/equipment/:id/adjust-stock',
+  verifyToken,
+  requireAdmin,
+  [
+    param('id').isMongoId(),
+    body('delta').isInt({ min: -100000, max: 100000 }).toInt().custom((value) => value !== 0),
+    body('reason').isString().trim().isLength({ min: 3, max: 1000 }),
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) throw validationErrorHandler(errors);
+    const { delta, reason } = req.body;
+    const filter = { _id: req.params.id };
+    if (delta < 0) filter.currentQuantity = { $gte: Math.abs(delta) };
+    const updated = await Equipment.findOneAndUpdate(
+      filter,
+      {
+        $inc: { currentQuantity: delta },
+        $push: { stockMovements: {
+          delta,
+          reason: reason.trim(),
+          performedBy: req.user.id,
+          performedAt: new Date(),
+          type: 'adjustment',
+        } },
+      },
+      { new: true, runValidators: true },
+    ).select('-checkouts');
+    if (!updated) {
+      const exists = await Equipment.exists({ _id: req.params.id });
+      if (!exists) throw notFoundErrorHandler('Equipment');
+      throw new ApiError(409, 'Stock adjustment would make available quantity negative');
+    }
+    res.json({ success: true, message: 'Stock adjusted and audit entry recorded', data: { item: updated } });
+  }),
 );
 
 router.delete(
