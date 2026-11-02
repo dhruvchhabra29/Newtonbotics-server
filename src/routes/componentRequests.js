@@ -37,18 +37,15 @@ const listValidators = [
 ];
 
 router.post('/', verifyToken, [
-  body('projectId').custom(validId).withMessage('Invalid project ID'),
+  body('projectId').optional({ nullable: true, checkFalsy: true }).custom(validId).withMessage('Invalid project ID'),
   body('equipmentId').optional({ nullable: true, checkFalsy: true }).custom(validId).withMessage('Invalid equipment ID'),
   body('componentName').optional().isString().trim().isLength({ min: 2, max: 255 }),
   body('quantity').isInt({ min: 1 }).toInt(),
   body('purpose').isString().trim().isLength({ min: 1, max: 2000 }),
 ], asyncHandler(async (req, res) => {
   checkValidation(req);
-  const project = await Project.findById(req.body.projectId).select('title teamLeaderId');
-  if (!project) throw notFoundErrorHandler('Project');
-  if (project.teamLeaderId?.toString() !== req.user.id.toString()) {
-    throw authorizationErrorHandler('Only the designated project team leader can request components');
-  }
+  const project = req.body.projectId ? await Project.findById(req.body.projectId).select('title') : null;
+  if (req.body.projectId && !project) throw notFoundErrorHandler('Project');
 
   let equipment = null;
   if (req.body.equipmentId) {
@@ -60,12 +57,12 @@ router.post('/', verifyToken, [
 
   const request = await ComponentRequest.create({
     requesterId: req.user.id,
-    projectId: project._id,
+    projectId: project?._id || null,
     equipmentId: equipment?._id || null,
     componentName,
     quantity: req.body.quantity,
     purpose: req.body.purpose.trim(),
-    auditTrail: [auditEntry('created', req.user.id, { requesterId: req.user.id, projectId: project._id, componentName, quantity: req.body.quantity, purpose: req.body.purpose.trim() }, req)],
+    auditTrail: [auditEntry('created', req.user.id, { requesterId: req.user.id, projectId: project?._id || null, componentName, quantity: req.body.quantity, purpose: req.body.purpose.trim() }, req)],
   });
   res.status(201).json({ success: true, message: 'Component request submitted', data: { request } });
 }));
@@ -127,8 +124,8 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       if (!request) throw notFoundErrorHandler('Component request');
       if (request.status !== 'pending') throw conflictErrorHandler('Only pending component requests can be approved');
 
-      const project = await Project.findById(request.projectId).select('title').session(session);
-      if (!project) throw notFoundErrorHandler('Project');
+      const project = request.projectId ? await Project.findById(request.projectId).select('title').session(session) : null;
+      if (request.projectId && !project) throw notFoundErrorHandler('Project');
 
       let sourceEquipment;
       if (request.equipmentId) {
@@ -150,33 +147,36 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
 
       const componentName = sourceEquipment.name;
       const nameKey = componentName.trim().toLowerCase();
-      const projectComponent = await ProjectComponent.findOneAndUpdate(
-        { projectId: request.projectId, nameKey, isDeleted: false },
-        {
-          $inc: { quantity: request.quantity },
-          $setOnInsert: {
-            projectId: request.projectId,
-            name: componentName,
-            nameKey,
-            category: sourceEquipment.categoryId?.name || 'Uncategorized',
-            minimumQuantity: 0,
-            location: sourceEquipment.location || '',
-            description: sourceEquipment.description || '',
-            isDeleted: false,
+      let projectComponent = null;
+      if (request.projectId) {
+        projectComponent = await ProjectComponent.findOneAndUpdate(
+          { projectId: request.projectId, nameKey, isDeleted: false },
+          {
+            $inc: { quantity: request.quantity },
+            $setOnInsert: {
+              projectId: request.projectId,
+              name: componentName,
+              nameKey,
+              category: sourceEquipment.categoryId?.name || 'Uncategorized',
+              minimumQuantity: 0,
+              location: sourceEquipment.location || '',
+              description: sourceEquipment.description || '',
+              isDeleted: false,
+            },
+            $push: { auditTrail: {
+              action: 'updated',
+              performedBy: req.user.id,
+              performedAt: transferTime,
+              changes: { source: 'component_request', requestId: request._id, quantityAdded: request.quantity },
+              ipAddress: req.ip,
+              userAgent: req.get('User-Agent'),
+            } },
           },
-          $push: { auditTrail: {
-            action: 'updated',
-            performedBy: req.user.id,
-            performedAt: transferTime,
-            changes: { source: 'component_request', requestId: request._id, quantityAdded: request.quantity },
-            ipAddress: req.ip,
-            userAgent: req.get('User-Agent'),
-          } },
-        },
-        { new: true, upsert: true, session, runValidators: true, setDefaultsOnInsert: true },
-      );
+          { new: true, upsert: true, session, runValidators: true, setDefaultsOnInsert: true },
+        );
+      }
 
-      const transfer = await InventoryTransfer.create([{
+      const transfer = request.projectId ? await InventoryTransfer.create([{
         requestId: request._id,
         requesterId: request.requesterId,
         projectId: request.projectId,
@@ -186,7 +186,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
         quantity: request.quantity,
         approvedBy: req.user.id,
         transferredAt: transferTime,
-      }], { session });
+      }], { session }) : [];
 
       const approvedRequest = await ComponentRequest.findOneAndUpdate(
         { _id: request._id, status: 'pending' },
@@ -197,7 +197,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
             projectId: request.projectId,
             componentName,
             equipmentId: sourceEquipment._id,
-            projectComponentId: projectComponent._id,
+            projectComponentId: projectComponent?._id || null,
             quantity: request.quantity,
             approvedBy: req.user.id,
             transferredAt: transferTime,
@@ -207,7 +207,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       );
       if (!approvedRequest) throw conflictErrorHandler('This component request has already been reviewed');
 
-      result = { request: approvedRequest, transfer: transfer[0], sourceEquipment: updatedEquipment, projectComponent };
+      result = { request: approvedRequest, transfer: transfer[0] || null, sourceEquipment: updatedEquipment, projectComponent };
     }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, readPreference: 'primary' });
   } finally {
     await session.endSession();
