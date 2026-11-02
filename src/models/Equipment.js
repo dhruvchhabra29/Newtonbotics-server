@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 const checkoutSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -26,6 +27,8 @@ const checkoutSchema = new mongoose.Schema({
 const equipmentSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, maxlength: 255, trim: true },
+    // Stable opaque identifier for printed QR labels; never encodes permissions or user data.
+    qrCodeId: { type: String, unique: true, sparse: true, immutable: true, index: true },
     description: { type: String, maxlength: 2000, trim: true },
     categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'EquipmentCategory', required: true },
     modelNumber: { type: String, maxlength: 100, trim: true },
@@ -49,6 +52,11 @@ const equipmentSchema = new mongoose.Schema(
 );
 
 equipmentSchema.index({ categoryId: 1, status: 1 });
+
+equipmentSchema.pre('validate', function assignQrCodeId(next) {
+  if (!this.qrCodeId) this.qrCodeId = `NB-${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
+  next();
+});
 
 module.exports = mongoose.model('Equipment', equipmentSchema);
 
