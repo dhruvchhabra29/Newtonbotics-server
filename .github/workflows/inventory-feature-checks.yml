@@ -1,0 +1,19 @@
+name: Inventory feature checks
+on:
+  push:
+    branches: [feature/secure-mongodb-inventory]
+  pull_request:
+    branches: [main]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx eslint src/models/Equipment.js src/models/ComponentRequest.js src/routes/inventory.js src/routes/componentRequests.js
+      - run: npm run build
+      - run: npm run test:unit -- --runInBand

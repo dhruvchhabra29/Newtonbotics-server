@@ -1,11 +1,11 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const router = express.Router();
-const { optionalAuth, verifyToken, requireTeamMember, requireAdmin } = require('../middleware/auth');
+const { verifyToken, requireTeamMember, requireAdmin } = require('../middleware/auth');
 const { sendInventoryCheckoutEmail } = require('../services/emailService');
 const Equipment = require('../models/Equipment');
 const EquipmentCategory = require('../models/EquipmentCategory');
-const { asyncHandler, validationErrorHandler, notFoundErrorHandler } = require('../middleware/errorHandler');
+const { asyncHandler, validationErrorHandler, notFoundErrorHandler, ApiError } = require('../middleware/errorHandler');
 const logger = require('../utils/logger');
 
 const equipmentFields = [
@@ -56,7 +56,7 @@ function pickEquipmentFields(input) {
 // Equipment list with filters
 router.get(
   '/equipment',
-  optionalAuth,
+  verifyToken,
   [
     query('categoryId').optional().isMongoId(),
     query('status').optional().isIn(['available', 'low_stock', 'out_of_stock', 'maintenance', 'retired']),
@@ -73,16 +73,26 @@ router.get(
     if (status) filter.status = status;
     if (q) filter.name = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
     const [items, total] = await Promise.all([
-      Equipment.find(filter).limit(limit).skip(skip).sort({ createdAt: -1 }),
+      Equipment.find(filter).select('-checkouts -stockMovements').limit(limit).skip(skip).sort({ createdAt: -1 }),
       Equipment.countDocuments(filter),
     ]);
     res.json({ success: true, data: { items, pagination: { total, limit, skip, hasMore: total > skip + items.length } } });
   })
 );
 
+// Resolve an opaque printed QR identifier to its inventory item.
+router.get('/equipment/qr/:qrCodeId', verifyToken, asyncHandler(async (req, res) => {
+  const qrCodeId = String(req.params.qrCodeId || '');
+  if (!/^NB-[A-F0-9]{24}$/.test(qrCodeId)) return res.status(404).json({ success: false, message: 'QR code not found' });
+  const item = await Equipment.findOne({ qrCodeId }).select('name description categoryId modelNumber manufacturer currentQuantity status location imageUrl qrCodeId').populate('categoryId', 'name');
+  if (!item) throw notFoundErrorHandler('Equipment');
+  res.json({ success: true, data: { item } });
+}));
+
 // Equipment get by id
 router.get(
   '/equipment/:id',
+  verifyToken,
   [param('id').isMongoId()],
   asyncHandler(async (req, res, next) => {
     const errors = validationResult(req);
@@ -90,7 +100,7 @@ router.get(
     return next();
   }),
   asyncHandler(async (req, res) => {
-    const eq = await Equipment.findById(req.params.id);
+    const eq = await Equipment.findById(req.params.id).select('-checkouts -stockMovements');
     if (!eq) throw notFoundErrorHandler('Equipment');
     res.json({ success: true, data: { item: eq } });
   })
@@ -124,12 +134,51 @@ router.put(
     const errors = validationResult(req);
     if (!errors.isEmpty()) throw validationErrorHandler(errors);
     const changes = pickEquipmentFields(req.body);
+    delete changes.currentQuantity; // Stock is changed only through the audited adjustment endpoint.
     if (!Object.keys(changes).length) return res.status(400).json({ success: false, message: 'At least one equipment field is required' });
     if (changes.categoryId && !(await EquipmentCategory.exists({ _id: changes.categoryId }))) throw notFoundErrorHandler('Category');
     const updated = await Equipment.findByIdAndUpdate(req.params.id, changes, { new: true, runValidators: true });
     if (!updated) throw notFoundErrorHandler('Equipment');
     res.json({ success: true, message: 'Equipment updated', data: { item: updated } });
   })
+);
+
+router.post(
+  '/equipment/:id/adjust-stock',
+  verifyToken,
+  requireAdmin,
+  [
+    param('id').isMongoId(),
+    body('delta').isInt({ min: -100000, max: 100000 }).toInt().custom((value) => value !== 0),
+    body('reason').isString().trim().isLength({ min: 3, max: 1000 }),
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) throw validationErrorHandler(errors);
+    const { delta, reason } = req.body;
+    const filter = { _id: req.params.id };
+    if (delta < 0) filter.currentQuantity = { $gte: Math.abs(delta) };
+    const updated = await Equipment.findOneAndUpdate(
+      filter,
+      {
+        $inc: { currentQuantity: delta },
+        $push: { stockMovements: {
+          delta,
+          reason: reason.trim(),
+          performedBy: req.user.id,
+          performedAt: new Date(),
+          type: 'adjustment',
+        } },
+      },
+      { new: true, runValidators: true },
+    ).select('-checkouts');
+    if (!updated) {
+      const exists = await Equipment.exists({ _id: req.params.id });
+      if (!exists) throw notFoundErrorHandler('Equipment');
+      throw new ApiError(409, 'Stock adjustment would make available quantity negative');
+    }
+    res.json({ success: true, message: 'Stock adjusted and audit entry recorded', data: { item: updated } });
+  }),
 );
 
 router.delete(
@@ -150,7 +199,7 @@ router.delete(
 router.post(
   '/equipment/:id/checkout',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     body('quantity').isInt({ min: 1 }).toInt(),
@@ -256,7 +305,7 @@ router.post(
 router.post(
   '/equipment/:id/urgent-checkout',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     body('quantity').optional().isInt({ min: 1 }).toInt(),
@@ -309,7 +358,7 @@ router.post(
 router.put(
   '/equipment/:id/return',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     body('checkoutId').optional().isString(),
@@ -415,7 +464,7 @@ router.put(
 router.get(
   '/checkouts',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     query('equipmentId').optional().isString(),
     query('userId').optional().isString(),
@@ -494,7 +543,7 @@ router.get(
     // Find all equipment and filter checkouts by userId
     const equipments = await Equipment.find({}).select('name categoryId checkouts');
 
-    let userCheckouts = [];
+    const userCheckouts = [];
     equipments.forEach(equipment => {
       equipment.checkouts.forEach(checkout => {
         if (String(checkout.userId) === String(userId)) {
@@ -534,7 +583,7 @@ router.get(
 router.get(
   '/equipment/:id/checkouts',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [
     param('id').isString(),
     query('status').optional().isIn(['checked_out', 'returned', 'overdue', 'lost', 'project_use']),
@@ -587,7 +636,7 @@ router.get(
 router.get(
   '/equipment/:id/checkouts/active',
   verifyToken,
-  requireTeamMember,
+  requireAdmin,
   [param('id').isString()],
   asyncHandler(async (req, res) => {
     const equipment = await Equipment.findById(req.params.id).select('name checkouts');
@@ -659,7 +708,7 @@ router.get(
 );
 
 // Categories CRUD
-router.get('/categories', optionalAuth, asyncHandler(async (req, res) => {
+router.get('/categories', verifyToken, asyncHandler(async (req, res) => {
   const items = await EquipmentCategory.find({}).sort({ name: 1 });
   res.json({ success: true, data: { items } });
 }));
