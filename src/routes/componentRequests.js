@@ -90,6 +90,7 @@ router.get('/', verifyToken, listValidators, asyncHandler(async (req, res) => {
     ComponentRequest.find(filter)
       .populate('requesterId', 'firstName lastName email')
       .populate('projectId', 'title')
+      .populate('equipmentId', 'name currentQuantity')
       .populate('reviewerId', 'firstName lastName email')
       .populate('auditTrail.performedBy', 'firstName lastName email role')
       .sort({ createdAt: -1 }).limit(limit).skip(skip),
