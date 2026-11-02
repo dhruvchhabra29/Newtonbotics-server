@@ -80,6 +80,15 @@ router.get(
   })
 );
 
+// Resolve an opaque printed QR identifier to its inventory item.
+router.get('/equipment/qr/:qrCodeId', asyncHandler(async (req, res) => {
+  const qrCodeId = String(req.params.qrCodeId || '');
+  if (!/^NB-[A-F0-9]{24}$/.test(qrCodeId)) return res.status(404).json({ success: false, message: 'QR code not found' });
+  const item = await Equipment.findOne({ qrCodeId }).select('-checkouts');
+  if (!item) throw notFoundErrorHandler('Equipment');
+  res.json({ success: true, data: { item } });
+}));
+
 // Equipment get by id
 router.get(
   '/equipment/:id',
