@@ -12,7 +12,7 @@ const ProjectComponent = require('../models/ProjectComponent');
 const router = express.Router();
 const validId = (value) => mongoose.Types.ObjectId.isValid(value);
 const hasPermission = (user, permissions) => (user?.permissions || []).some((permission) => permissions.includes(permission));
-const canReview = (user) => user && (user.role === 'admin' || hasPermission(user, ['approve:requests', 'manage:inventory']));
+const canReview = (user) => user && (user.role === 'admin' || hasPermission(user, ['system:admin']));
 const checkValidation = (req) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) throw validationErrorHandler(errors);
@@ -123,6 +123,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       const request = await ComponentRequest.findById(req.params.id).session(session);
       if (!request) throw notFoundErrorHandler('Component request');
       if (request.status !== 'pending') throw conflictErrorHandler('Only pending component requests can be approved');
+      if (String(request.requesterId) === String(req.user.id)) throw authorizationErrorHandler('You cannot approve your own component request');
 
       const project = request.projectId ? await Project.findById(request.projectId).select('title').session(session) : null;
       if (request.projectId && !project) throw notFoundErrorHandler('Project');
@@ -213,7 +214,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
     await session.endSession();
   }
 
-  res.json({ success: true, message: 'Request approved and inventory transferred', data: result });
+  res.json({ success: true, message: result.transfer ? 'Request approved and inventory transferred to project' : 'Request approved and stock issued', data: result });
 }));
 
 router.post('/:id/reject', verifyToken, [requestIdParam, body('reviewNotes').optional({ nullable: true }).isString().isLength({ max: 2000 })], asyncHandler(async (req, res) => {
@@ -228,6 +229,9 @@ router.post('/:id/reject', verifyToken, [requestIdParam, body('reviewNotes').opt
     },
     { new: true, runValidators: true },
   ).populate('requesterId', 'firstName lastName email').populate('projectId', 'title');
+  if (request && String(request.requesterId?._id || request.requesterId) === String(req.user.id)) {
+    throw authorizationErrorHandler('You cannot reject your own component request');
+  }
   if (!request) {
     const existing = await ComponentRequest.findById(req.params.id).select('status');
     if (!existing) throw notFoundErrorHandler('Component request');
@@ -235,7 +239,7 @@ router.post('/:id/reject', verifyToken, [requestIdParam, body('reviewNotes').opt
   }
   request.auditTrail[request.auditTrail.length - 1].changes = {
     requesterId: request.requesterId._id,
-    projectId: request.projectId._id,
+    projectId: request.projectId?._id || null,
     componentName: request.componentName,
     quantity: request.quantity,
     rejectedBy: req.user.id,
