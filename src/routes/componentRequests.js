@@ -125,7 +125,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       if (request.status !== 'pending') throw conflictErrorHandler('Only pending component requests can be approved');
       if (String(request.requesterId) === String(req.user.id)) throw authorizationErrorHandler('You cannot approve your own component request');
 
-      const approvedProjectId = Object.prototype.hasOwnProperty.call(req.body, 'projectId') ? req.body.projectId : approvedProjectId;
+      const approvedProjectId = Object.prototype.hasOwnProperty.call(req.body, 'projectId') ? req.body.projectId : request.projectId;
       const project = approvedProjectId ? await Project.findById(approvedProjectId).select('title').session(session) : null;
       if (approvedProjectId && !project) throw notFoundErrorHandler('Project');
 
