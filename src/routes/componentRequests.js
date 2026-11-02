@@ -143,7 +143,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       const transferTime = new Date();
       const updatedEquipment = await Equipment.findOneAndUpdate(
         { _id: sourceEquipment._id, currentQuantity: { $gte: request.quantity } },
-        { $inc: { currentQuantity: -request.quantity }, $push: { stockMovements: { delta: -request.quantity, reason: `Approved component request ${request._id}: ${request.purpose}`, performedBy: req.user.id, performedAt: transferTime, type: 'request_approval' } } },
+        { $inc: { currentQuantity: -request.quantity }, $push: { stockMovements: { delta: -request.quantity, reason: `Approved component request ${request._id}: ${request.purpose}`.slice(0, 1000), performedBy: req.user.id, performedAt: transferTime, type: 'request_approval' } } },
         { new: true, session, runValidators: true },
       );
       if (!updatedEquipment) throw new ApiError(409, 'Insufficient General Lab stock to approve this request');
@@ -194,7 +194,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       const approvedRequest = await ComponentRequest.findOneAndUpdate(
         { _id: request._id, status: 'pending' },
         {
-          $set: { status: 'approved', reviewerId: req.user.id, reviewNotes: req.body.reviewNotes?.trim() || '', approvedQuantity: request.quantity, reviewedAt: transferTime },
+          $set: { status: 'approved', projectId: approvedProjectId || null, reviewerId: req.user.id, reviewNotes: req.body.reviewNotes?.trim() || '', approvedQuantity: request.quantity, reviewedAt: transferTime },
           $push: { auditTrail: auditEntry('approved', req.user.id, {
             requesterId: request.requesterId,
             projectId: approvedProjectId,
