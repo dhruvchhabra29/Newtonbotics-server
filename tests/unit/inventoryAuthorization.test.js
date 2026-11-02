@@ -19,6 +19,7 @@ describe('component management authorization', () => {
     { router: inventoryRouter, method: 'post', path: '/equipment', label: 'shared component creation' },
     { router: inventoryRouter, method: 'put', path: '/equipment/:id', label: 'shared component updates' },
     { router: inventoryRouter, method: 'delete', path: '/equipment/:id', label: 'shared component deletion' },
+    { router: inventoryRouter, method: 'post', path: '/equipment/:id/adjust-stock', label: 'stock adjustments' },
     { router: inventoryRouter, method: 'post', path: '/categories', label: 'component category creation' },
     { router: inventoryRouter, method: 'put', path: '/categories/:id', label: 'component category updates' },
     { router: inventoryRouter, method: 'delete', path: '/categories/:id', label: 'component category deletion' },
@@ -35,11 +36,16 @@ describe('component management authorization', () => {
     expect(routeHandlers(route)).toContain(auth.requireAdmin);
   });
 
-  it('routes inventory component requests through the leader-authorized request API', () => {
+  it('allows every authenticated account to submit a component request while reserving review for admins', () => {
     expect(projectInventoryRouter.stack.some((layer) => layer.handle === componentRequestRouter)).toBe(true);
-    expect(findRoute(componentRequestRouter, 'post', '/')).toBeDefined();
-    expect(findRoute(componentRequestRouter, 'post', '/:id/approve')).toBeDefined();
-    expect(findRoute(componentRequestRouter, 'post', '/:id/reject')).toBeDefined();
+    const submit = findRoute(componentRequestRouter, 'post', '/');
+    const approve = findRoute(componentRequestRouter, 'post', '/:id/approve');
+    const reject = findRoute(componentRequestRouter, 'post', '/:id/reject');
+    expect(routeHandlers(submit)).toContain(auth.verifyToken);
+    expect(routeHandlers(submit)).not.toContain(auth.requireTeamMember);
+    expect(routeHandlers(submit)).not.toContain(auth.requireAdmin);
+    expect(routeHandlers(approve)).toContain(auth.verifyToken);
+    expect(routeHandlers(reject)).toContain(auth.verifyToken);
     expect(findRoute(projectInventoryRouter, 'patch', '/requests/:requestId')).toBeUndefined();
   });
 
