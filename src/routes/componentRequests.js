@@ -112,7 +112,7 @@ router.get('/:id', verifyToken, [requestIdParam], asyncHandler(async (req, res) 
   res.json({ success: true, data: { request } });
 }));
 
-router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').optional({ nullable: true }).isString().isLength({ max: 2000 })], asyncHandler(async (req, res) => {
+router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').optional({ nullable: true }).isString().isLength({ max: 2000 }), body('projectId').optional({ nullable: true }).custom((value) => value === null || validId(value)).withMessage('Invalid project ID')], asyncHandler(async (req, res) => {
   checkValidation(req);
   if (!canReview(req.user)) throw authorizationErrorHandler('Component request reviewer permission required');
 
@@ -125,8 +125,9 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       if (request.status !== 'pending') throw conflictErrorHandler('Only pending component requests can be approved');
       if (String(request.requesterId) === String(req.user.id)) throw authorizationErrorHandler('You cannot approve your own component request');
 
-      const project = request.projectId ? await Project.findById(request.projectId).select('title').session(session) : null;
-      if (request.projectId && !project) throw notFoundErrorHandler('Project');
+      const approvedProjectId = Object.prototype.hasOwnProperty.call(req.body, 'projectId') ? req.body.projectId : approvedProjectId;
+      const project = approvedProjectId ? await Project.findById(approvedProjectId).select('title').session(session) : null;
+      if (approvedProjectId && !project) throw notFoundErrorHandler('Project');
 
       let sourceEquipment;
       if (request.equipmentId) {
@@ -149,13 +150,13 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
       const componentName = sourceEquipment.name;
       const nameKey = componentName.trim().toLowerCase();
       let projectComponent = null;
-      if (request.projectId) {
+      if (approvedProjectId) {
         projectComponent = await ProjectComponent.findOneAndUpdate(
-          { projectId: request.projectId, nameKey, isDeleted: false },
+          { projectId: approvedProjectId, nameKey, isDeleted: false },
           {
             $inc: { quantity: request.quantity },
             $setOnInsert: {
-              projectId: request.projectId,
+              projectId: approvedProjectId,
               name: componentName,
               nameKey,
               category: sourceEquipment.categoryId?.name || 'Uncategorized',
@@ -177,10 +178,10 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
         );
       }
 
-      const transfer = request.projectId ? await InventoryTransfer.create([{
+      const transfer = approvedProjectId ? await InventoryTransfer.create([{
         requestId: request._id,
         requesterId: request.requesterId,
-        projectId: request.projectId,
+        projectId: approvedProjectId,
         equipmentId: sourceEquipment._id,
         componentId: projectComponent._id,
         componentName,
@@ -195,7 +196,7 @@ router.post('/:id/approve', verifyToken, [requestIdParam, body('reviewNotes').op
           $set: { status: 'approved', reviewerId: req.user.id, reviewNotes: req.body.reviewNotes?.trim() || '', approvedQuantity: request.quantity, reviewedAt: transferTime },
           $push: { auditTrail: auditEntry('approved', req.user.id, {
             requesterId: request.requesterId,
-            projectId: request.projectId,
+            projectId: approvedProjectId,
             componentName,
             equipmentId: sourceEquipment._id,
             projectComponentId: projectComponent?._id || null,
@@ -221,17 +222,17 @@ router.post('/:id/reject', verifyToken, [requestIdParam, body('reviewNotes').opt
   checkValidation(req);
   if (!canReview(req.user)) throw authorizationErrorHandler('Component request reviewer permission required');
   const reviewedAt = new Date();
+  const existingRequest = await ComponentRequest.findById(req.params.id).select('requesterId status');
+  if (!existingRequest) throw notFoundErrorHandler('Component request');
+  if (String(existingRequest.requesterId) === String(req.user.id)) throw authorizationErrorHandler('You cannot reject your own component request');
   const request = await ComponentRequest.findOneAndUpdate(
-    { _id: req.params.id, status: 'pending' },
+    { _id: req.params.id, status: 'pending', requesterId: { $ne: req.user.id } },
     {
       $set: { status: 'rejected', reviewerId: req.user.id, reviewNotes: req.body.reviewNotes?.trim() || '', reviewedAt },
       $push: { auditTrail: auditEntry('rejected', req.user.id, { requesterId: undefined, projectId: undefined, componentName: undefined, quantity: undefined, rejectedBy: req.user.id, reviewedAt }, req, req.body.reviewNotes?.trim() || null) },
     },
     { new: true, runValidators: true },
   ).populate('requesterId', 'firstName lastName email').populate('projectId', 'title');
-  if (request && String(request.requesterId?._id || request.requesterId) === String(req.user.id)) {
-    throw authorizationErrorHandler('You cannot reject your own component request');
-  }
   if (!request) {
     const existing = await ComponentRequest.findById(req.params.id).select('status');
     if (!existing) throw notFoundErrorHandler('Component request');
