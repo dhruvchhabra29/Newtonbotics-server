@@ -24,6 +24,14 @@ const checkoutSchema = new mongoose.Schema({
   returnedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Admin/inventory manager who processed return
 });
 
+const stockMovementSchema = new mongoose.Schema({
+  delta: { type: Number, required: true, validate: Number.isInteger },
+  reason: { type: String, required: true, trim: true, maxlength: 1000 },
+  performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  performedAt: { type: Date, default: Date.now, required: true },
+  type: { type: String, enum: ['adjustment', 'request_approval', 'return', 'opening_balance'], default: 'adjustment' },
+}, { _id: true });
+
 const equipmentSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, maxlength: 255, trim: true },
@@ -47,6 +55,7 @@ const equipmentSchema = new mongoose.Schema(
     lastMaintenanceDate: { type: Date },
     nextMaintenanceDate: { type: Date },
     checkouts: [checkoutSchema],
+    stockMovements: { type: [stockMovementSchema], default: [] },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
 );
