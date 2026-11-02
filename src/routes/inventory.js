@@ -56,7 +56,7 @@ function pickEquipmentFields(input) {
 // Equipment list with filters
 router.get(
   '/equipment',
-  optionalAuth,
+  verifyToken,
   [
     query('categoryId').optional().isMongoId(),
     query('status').optional().isIn(['available', 'low_stock', 'out_of_stock', 'maintenance', 'retired']),
@@ -92,6 +92,7 @@ router.get('/equipment/qr/:qrCodeId', asyncHandler(async (req, res) => {
 // Equipment get by id
 router.get(
   '/equipment/:id',
+  verifyToken,
   [param('id').isMongoId()],
   asyncHandler(async (req, res, next) => {
     const errors = validationResult(req);
